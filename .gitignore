@@ -47,6 +47,9 @@ coverage.xml
 /test/units/cover-html
 # Development
 /test/develop
+# KomodoIDE Stuff
+.komodotools
+*.komodoproject
 venv
 Vagrantfile
 .vagrant
