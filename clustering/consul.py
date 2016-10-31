@@ -219,7 +219,7 @@ try:
     import consul
     from requests.exceptions import ConnectionError
     python_consul_installed = True
-except ImportError, e:
+except ImportError:
     python_consul_installed = False
 
 def register_with_consul(module):
@@ -315,7 +315,7 @@ def add_service(module, service):
                      service_id=result.id,
                      service_name=result.name,
                      service_port=result.port,
-                     checks=map(lambda x: x.to_dict(), service.checks),
+                     checks=[check.to_dict() for check in service.checks],
                      tags=result.tags)
 
 
@@ -484,8 +484,7 @@ class ConsulCheck():
         if duration:
             duration_units = ['ns', 'us', 'ms', 's', 'm', 'h']
             if not any((duration.endswith(suffix) for suffix in duration_units)):
-                    raise Exception('Invalid %s %s you must specify units (%s)' %
-                        (name, duration, ', '.join(duration_units)))
+                duration = "{}s".format(duration)
         return duration
 
     def register(self, consul_api):
@@ -561,10 +560,10 @@ def main():
 
     try:
         register_with_consul(module)
-    except ConnectionError, e:
+    except ConnectionError as e:
         module.fail_json(msg='Could not connect to consul agent at %s:%s, error was %s' % (
                             module.params.get('host'), module.params.get('port'), str(e)))
-    except Exception, e:
+    except Exception as e:
         module.fail_json(msg=str(e))
 
 # import module snippets

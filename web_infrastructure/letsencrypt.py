@@ -49,6 +49,7 @@ description:
       protocol."
 requirements:
   - "python >= 2.6"
+  - openssl
 options:
   account_key:
     description:
@@ -66,7 +67,7 @@ options:
       - "The ACME directory to use. This is the entry point URL to access
          CA server API."
       - "For safety reasons the default is set to the Let's Encrypt staging server.
-         This will create technically correct, but untrusted certifiactes."
+         This will create technically correct, but untrusted certificates."
     required: false
     default: https://acme-staging.api.letsencrypt.org/directory
   agreement:
@@ -74,7 +75,7 @@ options:
       - "URI to a terms of service document you agree to when using the
          ACME service at C(acme_directory)."
     required: false
-    default: 'https://letsencrypt.org/documents/LE-SA-v1.0.1-July-27-2015.pdf'
+    default: 'https://letsencrypt.org/documents/LE-SA-v1.1.1-August-1-2016.pdf'
   challenge:
     description: The challenge to be performed.
     required: false
@@ -169,14 +170,18 @@ def simple_get(module,url):
     result = None
     try:
         content = resp.read()
+    except AttributeError:
+        if info['body']:
+            content = info['body']
+
+    if content:
         if info['content-type'].startswith('application/json'):
-            result = module.from_json(content.decode('utf8'))
+            try:
+                result = module.from_json(content.decode('utf8'))
+            except ValueError:
+                module.fail_json(msg="Failed to parse the ACME response: {0} {1}".format(url,content))
         else:
             result = content
-    except AttributeError:
-        result = None
-    except ValueError:
-        module.fail_json(msg="Failed to parse the ACME response: {0} {1}".format(url,content))
 
     if info['status'] >= 400:
         module.fail_json(msg="ACME request failed: CODE: {0} RESULT:{1}".format(info['status'],result))
@@ -187,12 +192,11 @@ def get_cert_days(module,cert_file):
     Return the days the certificate in cert_file remains valid and -1
     if the file was not found.
     '''
-    _cert_file = os.path.expanduser(cert_file)
-    if not os.path.exists(_cert_file):
+    if not os.path.exists(cert_file):
         return -1
 
     openssl_bin = module.get_bin_path('openssl', True)
-    openssl_cert_cmd = [openssl_bin, "x509", "-in", _cert_file, "-noout", "-text"]
+    openssl_cert_cmd = [openssl_bin, "x509", "-in", cert_file, "-noout", "-text"]
     _, out, _ = module.run_command(openssl_cert_cmd,check_rc=True)
     try:
         not_after_str = re.search(r"\s+Not After\s*:\s+(.*)",out.decode('utf8')).group(1)
@@ -288,7 +292,7 @@ class ACMEAccount(object):
     def __init__(self,module):
         self.module         = module
         self.agreement      = module.params['agreement']
-        self.key            = os.path.expanduser(module.params['account_key'])
+        self.key            = module.params['account_key']
         self.email          = module.params['account_email']
         self.data           = module.params['data']
         self.directory      = ACMEDirectory(module)
@@ -370,14 +374,18 @@ class ACMEAccount(object):
         result = None
         try:
             content = resp.read()
+        except AttributeError:
+            if info['body']:
+                content = info['body']
+
+        if content:
             if info['content-type'].startswith('application/json'):
-                result = self.module.from_json(content.decode('utf8'))
+                try:
+                    result = self.module.from_json(content.decode('utf8'))
+                except ValueError:
+                    self.module.fail_json(msg="Failed to parse the ACME response: {0} {1}".format(url,content))
             else:
                 result = content
-        except AttributeError:
-            result = None
-        except ValueError:
-            self.module.fail_json(msg="Failed to parse the ACME response: {0} {1}".format(url,content))
 
         return result,info
 
@@ -489,8 +497,8 @@ class ACMEClient(object):
     def __init__(self,module):
         self.module         = module
         self.challenge      = module.params['challenge']
-        self.csr            = os.path.expanduser(module.params['csr'])
-        self.dest           = os.path.expanduser(module.params['dest'])
+        self.csr            = module.params['csr']
+        self.dest           = module.params['dest']
         self.account        = ACMEAccount(module)
         self.directory      = self.account.directory
         self.authorizations = self.account.get_authorizations()
@@ -637,7 +645,7 @@ class ACMEClient(object):
                 "keyAuthorization": keyauthorization,
             }
             result, info = self.account.send_signed_request(uri, challenge_response)
-            if info['status'] != 200:
+            if info['status'] not in [200,202]:
                 self.module.fail_json(msg="Error validating challenge: CODE: {0} RESULT: {1}".format(info['status'], result))
 
         status = ''
@@ -747,14 +755,14 @@ class ACMEClient(object):
 def main():
     module = AnsibleModule(
         argument_spec = dict(
-            account_key    = dict(required=True, type='str'),
+            account_key    = dict(required=True, type='path'),
             account_email  = dict(required=False, default=None, type='str'),
             acme_directory = dict(required=False, default='https://acme-staging.api.letsencrypt.org/directory', type='str'),
-            agreement      = dict(required=False, default='https://letsencrypt.org/documents/LE-SA-v1.0.1-July-27-2015.pdf', type='str'),
+            agreement      = dict(required=False, default='https://letsencrypt.org/documents/LE-SA-v1.1.1-August-1-2016.pdf', type='str'),
             challenge      = dict(required=False, default='http-01', choices=['http-01', 'dns-01', 'tls-sni-02'], type='str'),
-            csr            = dict(required=True, aliases=['src'], type='str'),
+            csr            = dict(required=True, aliases=['src'], type='path'),
             data           = dict(required=False, no_log=True, default=None, type='dict'),
-            dest           = dict(required=True, aliases=['cert'], type='str'),
+            dest           = dict(required=True, aliases=['cert'], type='path'),
             remaining_days = dict(required=False, default=10, type='int'),
         ),
         supports_check_mode = True,

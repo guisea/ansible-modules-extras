@@ -29,37 +29,22 @@ short_description: Manage A10 Networks AX/SoftAX/Thunder/vThunder devices
 description:
     - Manage slb server objects on A10 Networks devices via aXAPI
 author: "Mischa Peters (@mischapeters)"
-notes:
-    - Requires A10 Networks aXAPI 2.1
+extends_documentation_fragment: a10
 options:
-  host:
-    description:
-      - hostname or ip of your A10 Networks device
-    required: true
-  username:
-    description:
-      - admin account of your A10 Networks device
-    required: true
-    aliases: ['user', 'admin']
-  password:
-    description:
-      - admin password of your A10 Networks device
-    required: true
-    aliases: ['pass', 'pwd']
   server_name:
     description:
-      - slb server name
+      - SLB server name.
     required: true
     aliases: ['server']
   server_ip:
     description:
-      - slb server IP address
+      - SLB server IP address.
     required: false
     default: null
     aliases: ['ip', 'address']
   server_status:
     description:
-      - slb virtual server status
+      - SLB virtual server status.
     required: false
     default: enabled
     aliases: ['status']
@@ -74,10 +59,11 @@ options:
     default: null
   state:
     description:
-      - create, update or remove slb server
+      - Create, update or remove slb server.
     required: false
     default: present
     choices: ['present', 'absent']
+
 '''
 
 EXAMPLES = '''
@@ -257,8 +243,8 @@ def main():
         else:
             result = dict(msg="the server was not present")
 
-    # if the config has changed, or we want to force a save, save the config unless otherwise requested
-    if changed or write_config:
+    # if the config has changed, save the config unless otherwise requested
+    if changed and write_config:
         write_result = axapi_call(module, session_url + '&method=system.action.write_memory')
         if axapi_failure(write_result):
             module.fail_json(msg="failed to save the configuration: %s" % write_result['response']['err']['msg'])
@@ -272,4 +258,5 @@ from ansible.module_utils.basic import *
 from ansible.module_utils.urls import *
 from ansible.module_utils.a10 import *
 
-main()
+if __name__ == '__main__':
+    main()

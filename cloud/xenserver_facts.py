@@ -28,7 +28,13 @@ author:
 '''
 
 import platform
-import XenAPI
+
+HAVE_XENAPI = False
+try:
+    import XenAPI
+    HAVE_XENAPI = True
+except ImportError:
+    pass
 
 EXAMPLES = '''
 - name: Gather facts from xenserver
@@ -158,10 +164,13 @@ def get_srs(session):
 def main():
     module = AnsibleModule({})
 
+    if not HAVE_XENAPI:
+        module.fail_json(changed=False, msg="python xen api required for this module")
+
     obj = XenServerFacts()
     try:
         session = get_xenapi_session()
-    except XenAPI.Failure, e:
+    except XenAPI.Failure as e:
         module.fail_json(msg='%s' % e)
 
     data = {

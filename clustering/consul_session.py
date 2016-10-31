@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 #
 # (c) 2015, Steve Gargan <steve.gargan@gmail.com>
 #
@@ -30,7 +31,7 @@ requirements:
   - python-consul
   - requests
 version_added: "2.0"
-author: "Steve Gargan (@sgargan)"
+author: "Steve Gargan @sgargan"
 options:
     state:
         description:
@@ -54,9 +55,8 @@ options:
         description:
           - the optional lock delay that can be attached to the session when it
             is created. Locks for invalidated sessions ar blocked from being
-            acquired until this delay has expired. Valid units for delays
-            include 'ns', 'us', 'ms', 's', 'm', 'h' 
-        default: 15s
+            acquired until this delay has expired. Durations are in seconds
+        default: 15
         required: false
     node:
         description:
@@ -114,7 +114,7 @@ EXAMPLES = '''
 - name: register basic session with consul
   consul_session:
     name: session1
-    
+
 - name: register a session with an existing check
   consul_session:
     name: session_with_check
@@ -137,7 +137,7 @@ try:
     import consul
     from requests.exceptions import ConnectionError
     python_consul_installed = True
-except ImportError, e:
+except ImportError:
     python_consul_installed = False
 
 def execute(module):
@@ -185,7 +185,7 @@ def lookup_sessions(module):
                              session_id=session_id,
                              sessions=session_by_id)
 
-    except Exception, e:
+    except Exception as e:
         module.fail_json(msg="Could not retrieve session info %s" % e)
 
 
@@ -201,12 +201,11 @@ def update_session(module):
     consul_client = get_consul_api(module)
 
     try:
-        
         session = consul_client.session.create(
             name=name,
             behavior=behavior,
             node=node,
-            lock_delay=validate_duration('delay', delay),
+            lock_delay=delay,
             dc=datacenter,
             checks=checks
         )
@@ -217,13 +216,12 @@ def update_session(module):
                          delay=delay,
                          checks=checks,
                          node=node)
-    except Exception, e:
+    except Exception as e:
         module.fail_json(msg="Could not create/update session %s" % e)
 
 
 def remove_session(module):
     session_id = module.params.get('id')
-
     if not session_id:
         module.fail_json(msg="""A session id must be supplied in order to
         remove a session.""")
@@ -235,22 +233,14 @@ def remove_session(module):
 
         module.exit_json(changed=True,
                          session_id=session_id)
-    except Exception, e:
+    except Exception as e:
         module.fail_json(msg="Could not remove session with id '%s' %s" % (
                          session_id, e))
-
-def validate_duration(name, duration):
-    if duration:
-        duration_units = ['ns', 'us', 'ms', 's', 'm', 'h']
-        if not any((duration.endswith(suffix) for suffix in duration_units)):
-                raise Exception('Invalid %s %s you must specify units (%s)' %
-                    (name, duration, ', '.join(duration_units)))
-    return duration
 
 def get_consul_api(module):
     return consul.Consul(host=module.params.get('host'),
                          port=module.params.get('port'))
-                         
+
 def test_dependencies(module):
     if not python_consul_installed:
         module.fail_json(msg="python-consul required for this module. "\
@@ -259,7 +249,7 @@ def test_dependencies(module):
 def main():
     argument_spec = dict(
         checks=dict(default=None, required=False, type='list'),
-        delay=dict(required=False,type='str', default='15s'),
+        delay=dict(required=False,type='int', default='15'),
         behavior=dict(required=False,type='str', default='release',
                       choices=['release', 'delete']),
         host=dict(default='localhost'),
@@ -275,15 +265,15 @@ def main():
     )
 
     module = AnsibleModule(argument_spec, supports_check_mode=False)
-    
+
     test_dependencies(module)
-    
+
     try:
         execute(module)
-    except ConnectionError, e:
+    except ConnectionError as e:
         module.fail_json(msg='Could not connect to consul agent at %s:%s, error was %s' % (
                             module.params.get('host'), module.params.get('port'), str(e)))
-    except Exception, e:
+    except Exception as e:
         module.fail_json(msg=str(e))
 
 # import module snippets

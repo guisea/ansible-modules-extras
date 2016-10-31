@@ -107,8 +107,6 @@ EXAMPLES = '''
 
 '''
 
-
-import sys  # noqa
 import re
 
 try:
@@ -120,6 +118,9 @@ except ImportError:
     HAS_BOTO = False
     if __name__ != '__main__':
         raise
+
+from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.ec2 import AnsibleAWSError, connect_to_aws, ec2_argument_spec, get_aws_connection_info
 
 
 class AnsibleRouteTableException(Exception):
@@ -179,7 +180,7 @@ def find_subnets(vpc_conn, vpc_id, identified_subnets):
         for cidr in subnet_cidrs:
             if not any(s.cidr_block == cidr for s in subnets_by_cidr):
                 raise AnsibleSubnetSearchException(
-                    'Subnet CIDR "{0}" does not exist'.format(subnet_cidr))
+                    'Subnet CIDR "{0}" does not exist'.format(cidr))
 
     subnets_by_name = []
     if subnet_names:
@@ -187,11 +188,11 @@ def find_subnets(vpc_conn, vpc_id, identified_subnets):
             filters={'vpc_id': vpc_id, 'tag:Name': subnet_names})
 
         for name in subnet_names:
-            matching = [s.tags.get('Name') == name for s in subnets_by_name]
-            if len(matching) == 0:
+            matching_count = len([1 for s in subnets_by_name if s.tags.get('Name') == name])
+            if matching_count == 0:
                 raise AnsibleSubnetSearchException(
                     'Subnet named "{0}" does not exist'.format(name))
-            elif len(matching) > 1:
+            elif matching_count > 1:
                 raise AnsibleSubnetSearchException(
                     'Multiple subnets named "{0}"'.format(name))
 
@@ -605,7 +606,7 @@ def main():
     if region:
         try:
             connection = connect_to_aws(boto.vpc, region, **aws_connect_params)
-        except (boto.exception.NoAuthHandlerFound, AnsibleAWSError), e:
+        except (boto.exception.NoAuthHandlerFound, AnsibleAWSError) as e:
             module.fail_json(msg=str(e))
     else:
         module.fail_json(msg="region must be specified")
@@ -627,8 +628,6 @@ def main():
 
     module.exit_json(**result)
 
-from ansible.module_utils.basic import *  # noqa
-from ansible.module_utils.ec2 import *  # noqa
 
 if __name__ == '__main__':
     main()

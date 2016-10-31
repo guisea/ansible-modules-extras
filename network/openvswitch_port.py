@@ -82,13 +82,13 @@ EXAMPLES = '''
 - openvswitch_port: bridge=br-ex port=vlan10 tag=10 state=present
                     set="Interface vlan10 type=internal"
 
-# Assign interface id server1-vifeth6 and mac address 52:54:00:30:6d:11
+# Assign interface id server1-vifeth6 and mac address 00:00:5E:00:53:23
 # to port vifeth6 and setup port to be managed by a controller.
 - openvswitch_port: bridge=br-int port=vifeth6 state=present
   args:
     external_ids:
       iface-id: "{{inventory_hostname}}-vifeth6"
-      attached-mac: "52:54:00:30:6d:11"
+      attached-mac: "00:00:5E:00:53:23"
       vm-id: "{{inventory_hostname}}"
       iface-status: "active"
 '''
@@ -204,7 +204,8 @@ class OVSPort(object):
                 changed = True
             else:
                 changed = False
-        except Exception, earg:
+        except Exception:
+            earg = get_exception()
             self.module.fail_json(msg=str(earg))
         self.module.exit_json(changed=changed)
 
@@ -235,7 +236,8 @@ class OVSPort(object):
                         external_id = fmt_opt % (self.port, key, value)
                         changed = self.set(external_id) or changed
                 ##
-        except Exception, earg:
+        except Exception:
+            earg = get_exception()
             self.module.fail_json(msg=str(earg))
         self.module.exit_json(changed=changed)
 
@@ -269,4 +271,5 @@ def main():
 
 # import module snippets
 from ansible.module_utils.basic import *
+from ansible.module_utils.pycompat24 import get_exception
 main()

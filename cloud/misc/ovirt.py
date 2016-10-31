@@ -256,9 +256,9 @@ ovirt:
     url: https://ovirt.example.com
     hostname: testansible
     domain: ansible.local
-    ip: 192.168.1.100
+    ip: 192.0.2.100
     netmask: 255.255.255.0
-    gateway: 192.168.1.1
+    gateway: 192.0.2.1
     rootpw: bigsecret
 
 '''
@@ -333,6 +333,7 @@ def vm_start(conn, vmname, hostname=None, ip=None, netmask=None, gateway=None,
     vm = conn.vms.get(name=vmname)
     use_cloud_init = False
     nics = None
+    nic = None
     if hostname or ip or netmask or gateway or domain or dns or rootpw or key:
         use_cloud_init = True
     if ip and netmask and gateway:
@@ -460,7 +461,7 @@ def main():
     #initialize connection
     try:
         c = conn(url+"/api", user, password)
-    except Exception, e:
+    except Exception as e:
         module.fail_json(msg='%s' % e)
 
     if state == 'present':
@@ -468,14 +469,14 @@ def main():
             if resource_type == 'template':
                 try:
                     create_vm_template(c, vmname, image, zone)
-                except Exception, e:
+                except Exception as e:
                     module.fail_json(msg='%s' % e)
                 module.exit_json(changed=True, msg="deployed VM %s from template %s"  % (vmname,image))
             elif resource_type == 'new':
                 # FIXME: refactor, use keyword args.
                 try:
                     create_vm(c, vmtype, vmname, zone, vmdisk_size, vmcpus, vmnic, vmnetwork, vmmem, vmdisk_alloc, sdomain, vmcores, vmos, vmdisk_int)
-                except Exception, e:
+                except Exception as e:
                     module.fail_json(msg='%s' % e)
                 module.exit_json(changed=True, msg="deployed VM %s from scratch"  % vmname)
             else:

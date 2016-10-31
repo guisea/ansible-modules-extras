@@ -24,6 +24,8 @@ author: Michael Baydoun (@MichaelBaydoun)
 requirements: [ botocore, boto3 ]
 notes:
     - You cannot create more than one customer gateway with the same IP address. If you run an identical request more than one time, the first request creates the customer gateway, and subsequent requests return information about the existing customer gateway. The subsequent requests do not create new customer gateway resources.
+    - Return values contain customer_gateway and customer_gateways keys which are identical dicts. You should use
+      customer_gateway. See U(https://github.com/ansible/ansible-modules-extras/issues/2773) for details.
 options:
   bgp_asn:
     description:
@@ -118,6 +120,11 @@ try:
 except ImportError:
     HAS_BOTO3 = False
 
+from ansible.module_utils.basic import AnsibleModule
+from ansible.module_utils.ec2 import (boto3_conn, camel_dict_to_snake_dict,
+        ec2_argument_spec, get_aws_connection_info)
+
+
 class Ec2CustomerGatewayManager:
 
     def __init__(self, module):
@@ -128,7 +135,7 @@ class Ec2CustomerGatewayManager:
             if not region:
                 module.fail_json(msg="Region must be specified as a parameter, in EC2_REGION or AWS_REGION environment variables or in boto configuration file")
             self.ec2 = boto3_conn(module, conn_type='client', resource='ec2', region=region, endpoint=ec2_url, **aws_connect_kwargs)
-        except ClientError, e:
+        except ClientError as e:
             module.fail_json(msg=e.message)
 
     def ensure_cgw_absent(self, gw_id):
@@ -182,18 +189,24 @@ class Ec2CustomerGatewayManager:
         )
         return response
 
+
 def main():
     argument_spec = ec2_argument_spec()
     argument_spec.update(
         dict(
-            bgp_asn = dict(required=False, type='int'),
-            ip_address = dict(required=True),
-            name = dict(required=True),
-            state = dict(default='present', choices=['present', 'absent']),
+            bgp_asn=dict(required=False, type='int'),
+            ip_address=dict(required=True),
+            name=dict(required=True),
+            state=dict(default='present', choices=['present', 'absent']),
         )
     )
 
-    module = AnsibleModule(argument_spec=argument_spec, supports_check_mode=True)
+    module = AnsibleModule(argument_spec=argument_spec,
+                           supports_check_mode=True,
+                           required_if=[
+                               ('state', 'present', ['bgp_arn'])
+                           ]
+                           )
 
     if not HAS_BOTOCORE:
         module.fail_json(msg='botocore is required.')
@@ -203,24 +216,25 @@ def main():
 
     gw_mgr = Ec2CustomerGatewayManager(module)
 
-    bgp_asn = module.params.get('bgp_asn')
-    ip_address = module.params.get('ip_address')
     name = module.params.get('name')
 
     existing = gw_mgr.describe_gateways(module.params['ip_address'])
+    # describe_gateways returns a key of CustomerGateways where as create_gateway returns a
+    # key of CustomerGateway. For consistency, change it here
+    existing['CustomerGateway'] = existing['CustomerGateways']
 
     results = dict(changed=False)
     if module.params['state'] == 'present':
-        if existing['CustomerGateways']:
-            results['gateway']=existing
-            if existing['CustomerGateways'][0]['Tags']:
-                tag_array = existing['CustomerGateways'][0]['Tags']
+        if existing['CustomerGateway']:
+            results['gateway'] = existing
+            if existing['CustomerGateway'][0]['Tags']:
+                tag_array = existing['CustomerGateway'][0]['Tags']
                 for key, value in enumerate(tag_array):
                     if value['Key'] == 'Name':
                         current_name = value['Value']
                         if current_name != name:
                             results['name'] = gw_mgr.tag_cgw_name(
-                                results['gateway']['CustomerGateways'][0]['CustomerGatewayId'],
+                                results['gateway']['CustomerGateway'][0]['CustomerGatewayId'],
                                 module.params['name'],
                             )
                             results['changed'] = True
@@ -237,20 +251,17 @@ def main():
             results['changed'] = True
 
     elif module.params['state'] == 'absent':
-        if existing['CustomerGateways']:
-            results['gateway']=existing
+        if existing['CustomerGateway']:
+            results['gateway'] = existing
             if not module.check_mode:
                 results['gateway'] = gw_mgr.ensure_cgw_absent(
-                    existing['CustomerGateways'][0]['CustomerGatewayId']
+                    existing['CustomerGateway'][0]['CustomerGatewayId']
                 )
             results['changed'] = True
 
     pretty_results = camel_dict_to_snake_dict(results)
     module.exit_json(**pretty_results)
 
-# import module methods
-from ansible.module_utils.basic import *
-from ansible.module_utils.ec2 import *
 
 if __name__ == '__main__':
     main()

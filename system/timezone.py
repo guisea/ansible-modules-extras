@@ -18,7 +18,11 @@
 # You should have received a copy of the GNU General Public License
 # along with Ansible.  If not, see <http://www.gnu.org/licenses/>.
 
+import os
 import re
+from ansible.module_utils.basic import AnsibleModule, get_platform
+from ansible.module_utils.six import iteritems
+
 
 DOCUMENTATION = '''
 ---
@@ -48,7 +52,7 @@ options:
         to configure, especially on virtual environments such as AWS.
     required: false
     aliases: ['rtc']
-author: "Shinichi TAMURA @tmshn"
+author: "Shinichi TAMURA (@tmshn)"
 '''
 
 RETURN = '''
@@ -109,7 +113,7 @@ class Timezone(object):
         # Initially there's only info of "planned" phase, but the
         # `self.check()` function will fill out it.
         self.value = dict()
-        for key in module.argument_spec.iterkeys():
+        for key in module.argument_spec:
             value = module.params[key]
             if value is not None:
                 self.value[key] = dict(planned=value)
@@ -146,7 +150,7 @@ class Timezone(object):
         command = ' '.join(commands)
         (rc, stdout, stderr) = self.module.run_command(command, check_rc=True)
         if kwargs.get('log', False):
-            self.msg.append('executed `{0}`'.format(command))
+            self.msg.append('executed `%s`' % command)
         return stdout
 
     def diff(self, phase1='before', phase2='after'):
@@ -161,7 +165,7 @@ class Timezone(object):
                 `--diff` option of ansible-playbook.
         """
         diff = {phase1: {}, phase2: {}}
-        for key, value in self.value.iteritems():
+        for key, value in iteritems(self.value):
             diff[phase1][key] = value[phase1]
             diff[phase2][key] = value[phase2]
         return diff
@@ -177,12 +181,12 @@ class Timezone(object):
         """
         if phase == 'planned':
             return
-        for key, value in self.value.iteritems():
+        for key, value in iteritems(self.value):
             value[phase] = self.get(key, phase)
 
     def change(self):
         """Make the changes effect based on `self.value`."""
-        for key, value in self.value.iteritems():
+        for key, value in iteritems(self.value):
             if value['before'] != value['planned']:
                 self.set(key, value['planned'])
 
@@ -214,6 +218,12 @@ class Timezone(object):
         """
         self.abort('set(key, value) is not implemented on target platform')
 
+    def _verify_timezone(self):
+        tz = self.value['name']['planned']
+        tzfile = '/usr/share/zoneinfo/%s' % tz
+        if not os.path.isfile(tzfile):
+            self.abort('given timezone "%s" is not available' % tz)
+
 
 class SystemdTimezone(Timezone):
     """This is a Timezone manipulation class systemd-powered Linux.
@@ -237,10 +247,7 @@ class SystemdTimezone(Timezone):
         self.status = dict()
         # Validate given timezone
         if 'name' in self.value:
-            tz = self.value['name']['planned']
-            tzfile = '/usr/share/zoneinfo/{0}'.format(tz)
-            if not os.path.isfile(tzfile):
-                self.abort('given timezone "{0}" is not available'.format(tz))
+            self._verify_timezone()
 
     def _get_status(self, phase):
         if phase not in self.status:
@@ -294,12 +301,9 @@ class NosystemdTimezone(Timezone):
         super(NosystemdTimezone, self).__init__(module)
         # Validate given timezone
         if 'name' in self.value:
-            tz = self.value['name']['planned']
-            tzfile = '/usr/share/zoneinfo/{0}'.format(tz)
-            if not os.path.isfile(tzfile):
-                self.abort('given timezone "{0}" is not available'.format(tz))
+            self._verify_timezone()
             self.update_timezone  = self.module.get_bin_path('cp', required=True)
-            self.update_timezone += ' {0} /etc/localtime'.format(tzfile)
+            self.update_timezone += ' %s /etc/localtime' % tzfile
         self.update_hwclock = self.module.get_bin_path('hwclock', required=True)
         # Distribution-specific configurations
         if self.module.get_bin_path('dpkg-reconfigure') is not None:
@@ -309,7 +313,7 @@ class NosystemdTimezone(Timezone):
             self.conf_files['name']    = '/etc/timezone',
             self.conf_files['hwclock'] = '/etc/default/rcS',
             self.regexps['name']       = re.compile(r'^([^\s]+)', re.MULTILINE)
-            self.tzline_format         = '{0}\n'
+            self.tzline_format         = '%s\n'
         else:
             # RHEL/CentOS
             if self.module.get_bin_path('tzdata-update') is not None:
@@ -319,7 +323,7 @@ class NosystemdTimezone(Timezone):
             self.conf_files['name']    = '/etc/sysconfig/clock'
             self.conf_files['hwclock'] = '/etc/sysconfig/clock'
             self.regexps['name']       = re.compile(r'^ZONE\s*=\s*"?([^"\s]+)"?', re.MULTILINE)
-            self.tzline_format         = 'ZONE="{0}"\n'
+            self.tzline_format         = 'ZONE="%s"\n'
         self.update_hwclock  = self.module.get_bin_path('hwclock', required=True)
 
     def _edit_file(self, filename, regexp, value):
@@ -336,7 +340,7 @@ class NosystemdTimezone(Timezone):
         try:
             file = open(filename, 'r')
         except IOError:
-            self.abort('cannot read "{0}"'.format(filename))
+            self.abort('cannot read "%s"' % filename)
         else:
             lines = file.readlines()
             file.close()
@@ -358,27 +362,30 @@ class NosystemdTimezone(Timezone):
         try:
             file = open(filename, 'w')
         except IOError:
-            self.abort('cannot write to "{0}"'.format(filename))
+            self.abort('cannot write to "%s"' % filename)
         else:
             file.writelines(lines)
             file.close()
-        self.msg.append('Added 1 line and deleted {0} line(s) on {1}'.format(len(matched_indices), filename))
+        self.msg.append('Added 1 line and deleted %s line(s) on %s' % (len(matched_indices), filename))
 
     def get(self, key, phase):
         if key == 'hwclock' and os.path.isfile('/etc/adjtime'):
             # If /etc/adjtime exists, use that file.
             key = 'adjtime'
+
+        filename = self.conf_files[key]
+
         try:
-            file = open(self.conf_files[key], mode='r')
+            file = open(filename, mode='r')
         except IOError:
-            self.abort('cannot read configuration file "{0}" for {1}'.format(filename, key))
+            self.abort('cannot read configuration file "%s" for %s' % (filename, key))
         else:
             status = file.read()
             file.close()
             try:
                 value = self.regexps[key].search(status).group(1)
             except AttributeError:
-                self.abort('cannot find the valid value from configuration file "{0}" for {1}'.format(filename, key))
+                self.abort('cannot find the valid value from configuration file "%s" for %s' % (filename, key))
             else:
                 if key == 'hwclock':
                     # For key='hwclock'; convert yes/no -> UTC/local
@@ -395,7 +402,7 @@ class NosystemdTimezone(Timezone):
     def set_timezone(self, value):
         self._edit_file(filename=self.conf_files['name'],
                         regexp=self.regexps['name'],
-                        value=self.tzline_format.format(value))
+                        value=self.tzline_format % value)
         self.execute(self.update_timezone)
 
     def set_hwclock(self, value):
@@ -411,7 +418,7 @@ class NosystemdTimezone(Timezone):
         elif key == 'hwclock':
             self.set_hwclock(value)
         else:
-            self.abort('unknown parameter "{0}"'.format(key))
+            self.abort('unknown parameter "%s"' % key)
 
 
 def main():
@@ -450,8 +457,6 @@ def main():
     else:
         module.exit_json(changed=changed, diff=diff)
 
-
-from ansible.module_utils.basic import *
 
 if __name__ == '__main__':
     main()

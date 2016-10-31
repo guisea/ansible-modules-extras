@@ -55,6 +55,12 @@ options:
       - for another states will be autodiscovered
     default: null
     required: false
+  pool:
+    description:
+      - Proxmox VE resource pool
+    default: null
+    required: false
+    version_added: "2.3"
   password:
     description:
       - the instance root password
@@ -164,7 +170,7 @@ options:
     default: present
 notes:
   - Requires proxmoxer and requests modules on host. This modules can be installed with pip.
-requirements: [ "proxmoxer", "requests" ]
+requirements: [ "proxmoxer", "python >= 2.7", "requests" ]
 author: "Sergei Antipov @UnderGreen"
 '''
 
@@ -180,6 +186,9 @@ EXAMPLES = '''
 
 # Create new container with minimal options defining network interface with dhcp
 - proxmox: vmid=100 node='uk-mc02' api_user='root@pam' api_password='1q2w3e' api_host='node1' password='123456' hostname='example.org' ostemplate='local:vztmpl/ubuntu-14.04-x86_64.tar.gz' netif='{"net0":"name=eth0,ip=dhcp,ip6=dhcp,bridge=vmbr0"}'
+
+# Create new container with minimal options defining network interface with static ip
+- proxmox: vmid=100 node='uk-mc02' api_user='root@pam' api_password='1q2w3e' api_host='node1' password='123456' hostname='example.org' ostemplate='local:vztmpl/ubuntu-14.04-x86_64.tar.gz' netif='{"net0":"name=eth0,gw=192.168.0.1,ip=192.168.0.2/24,bridge=vmbr0"}'
 
 # Create new container with minimal options defining a mount
 - proxmox: vmid=100 node='uk-mc02' api_user='root@pam' api_password='1q2w3e' api_host='node1' password='123456' hostname='example.org' ostemplate='local:vztmpl/ubuntu-14.04-x86_64.tar.gz' mounts='{"mp0":"local:8,mp=/mnt/test/"}'
@@ -214,8 +223,8 @@ VZ_TYPE=None
 def get_instance(proxmox, vmid):
   return [ vm for vm in proxmox.cluster.resources.get(type='vm') if vm['vmid'] == int(vmid) ]
 
-def content_check(proxmox, node, ostemplate, storage):
-  return [ True for cnt in proxmox.nodes(node).storage(storage).content.get() if cnt['volid'] == ostemplate ]
+def content_check(proxmox, node, ostemplate, template_store):
+  return [ True for cnt in proxmox.nodes(node).storage(template_store).content.get() if cnt['volid'] == ostemplate ]
 
 def node_check(proxmox, node):
   return [ True for nd in proxmox.nodes.get() if nd['node'] == node ]
@@ -303,6 +312,7 @@ def main():
       vmid = dict(required=True),
       validate_certs = dict(type='bool', default='no'),
       node = dict(),
+      pool = dict(),
       password = dict(no_log=True),
       hostname = dict(),
       ostemplate = dict(),
@@ -339,13 +349,15 @@ def main():
   memory = module.params['memory']
   swap = module.params['swap']
   storage = module.params['storage']
+  if module.params['ostemplate'] is not None:
+    template_store = module.params['ostemplate'].split(":")[0]
   timeout = module.params['timeout']
 
   # If password not set get it from PROXMOX_PASSWORD env
   if not api_password:
     try:
       api_password = os.environ['PROXMOX_PASSWORD']
-    except KeyError, e:
+    except KeyError as e:
       module.fail_json(msg='You should set api_password param or use PROXMOX_PASSWORD environment variable')
 
   try:
@@ -353,7 +365,7 @@ def main():
     global VZ_TYPE
     VZ_TYPE = 'openvz' if float(proxmox.version.get()['version']) < 4.0 else 'lxc'
 
-  except Exception, e:
+  except Exception as e:
     module.fail_json(msg='authorization on proxmox cluster failed with exception: %s' % e)
 
   if state == 'present':
@@ -364,11 +376,12 @@ def main():
         module.fail_json(msg='node, hostname, password and ostemplate are mandatory for creating vm')
       elif not node_check(proxmox, node):
         module.fail_json(msg="node '%s' not exists in cluster" % node)
-      elif not content_check(proxmox, node, module.params['ostemplate'], storage):
+      elif not content_check(proxmox, node, module.params['ostemplate'], template_store):
         module.fail_json(msg="ostemplate '%s' not exists on node %s and storage %s"
-                         % (module.params['ostemplate'], node, storage))
+                         % (module.params['ostemplate'], node, template_store))
 
       create_instance(module, proxmox, vmid, node, disk, storage, cpus, memory, swap, timeout,
+                      pool = module.params['pool'],
                       password = module.params['password'],
                       hostname = module.params['hostname'],
                       ostemplate = module.params['ostemplate'],
@@ -382,7 +395,7 @@ def main():
                       force = int(module.params['force']))
 
       module.exit_json(changed=True, msg="deployed VM %s from template %s"  % (vmid, module.params['ostemplate']))
-    except Exception, e:
+    except Exception as e:
       module.fail_json(msg="creation of %s VM %s failed with exception: %s" % ( VZ_TYPE, vmid, e ))
 
   elif state == 'started':
@@ -395,7 +408,7 @@ def main():
 
       if start_instance(module, proxmox, vm, vmid, timeout):
         module.exit_json(changed=True, msg="VM %s started" % vmid)
-    except Exception, e:
+    except Exception as e:
       module.fail_json(msg="starting of VM %s failed with exception: %s" % ( vmid, e ))
 
   elif state == 'stopped':
@@ -417,7 +430,7 @@ def main():
 
       if stop_instance(module, proxmox, vm, vmid, timeout, force = module.params['force']):
         module.exit_json(changed=True, msg="VM %s is shutting down" % vmid)
-    except Exception, e:
+    except Exception as e:
       module.fail_json(msg="stopping of VM %s failed with exception: %s" % ( vmid, e ))
 
   elif state == 'restarted':
@@ -432,7 +445,7 @@ def main():
       if ( stop_instance(module, proxmox, vm, vmid, timeout, force = module.params['force']) and
           start_instance(module, proxmox, vm, vmid, timeout) ):
         module.exit_json(changed=True, msg="VM %s is restarted" % vmid)
-    except Exception, e:
+    except Exception as e:
       module.fail_json(msg="restarting of VM %s failed with exception: %s" % ( vmid, e ))
 
   elif state == 'absent':
@@ -458,7 +471,7 @@ def main():
                            % proxmox_node.tasks(taskid).log.get()[:1])
 
         time.sleep(1)
-    except Exception, e:
+    except Exception as e:
       module.fail_json(msg="deletion of VM %s failed with exception: %s" % ( vmid, e ))
 
 # import module snippets
